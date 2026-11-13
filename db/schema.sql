@@ -1,6 +1,13 @@
--- T06 Plan-Do-See 다이어리 스키마 (PostgreSQL / Supabase)
+-- T07 Plan-Do-See 다이어리 스키마 (PostgreSQL / Supabase) — T06 스키마에 회원·세션을 더한 것
 -- 규칙: date 컬럼은 서울 달력 날짜(YYYY-MM-DD) 그대로, timestamptz는 UTC 저장·서울 표시, 시간 수치는 모두 "분" 정수.
 -- Supabase SQL Editor에 전체를 붙여 넣고 실행합니다. 다시 실행해도 안전합니다.
+--
+-- T07은 T06과 같은 Supabase 프로젝트를 쓰되 별도 스키마 t07에 둔다(무료 프로젝트 2개 한도).
+-- T06 앱은 public 스키마만 읽으므로 T07 기록이 T06 공개 주소로 보이지 않는다.
+-- T07 앱은 전용 역할 t07_app으로만 접속하고, 이 역할은 t07 스키마에만 권한이 있다(맨 아래).
+-- 실행 전 준비: db/t07-role.sql로 t07_app 역할을 먼저 만든다(비밀번호는 직접 정함).
+create schema if not exists t07;
+set search_path to t07;
 
 -- ===== 카드 1: 계획과 수정 이력 =====
 
@@ -244,3 +251,25 @@ create unique index if not exists tag_colors_user_tag on tag_colors (user_id, ta
 
 alter table users enable row level security;
 alter table sessions enable row level security;
+
+-- ===== T07: 전용 역할 t07_app 권한 =====
+-- t07_app은 t07 스키마의 표만 읽고 쓸 수 있다(public 스키마의 T06 표에는 권한 없음).
+-- 표마다 RLS가 켜져 있으므로 t07_app에만 전체 허용 정책을 둔다. 사용자별 구분은 API(user_id 조건)가 한다.
+-- anon·authenticated(공개 REST)에는 아무 권한도 주지 않는다.
+do $$
+declare t text;
+begin
+  if not exists (select 1 from pg_roles where rolname = 't07_app') then
+    raise notice 't07_app 역할이 없어 권한 설정을 건너뜁니다(db/t07-role.sql 먼저 실행)';
+    return;
+  end if;
+  execute 'alter role t07_app set search_path = t07';
+  execute 'grant usage on schema t07 to t07_app';
+  execute 'grant select, insert, update, delete on all tables in schema t07 to t07_app';
+  execute 'grant usage, select on all sequences in schema t07 to t07_app';
+  execute 'grant execute on all functions in schema t07 to t07_app';
+  for t in select tablename from pg_tables where schemaname = 't07' loop
+    execute format('drop policy if exists t07_app_all on t07.%I', t);
+    execute format('create policy t07_app_all on t07.%I for all to t07_app using (true) with check (true)', t);
+  end loop;
+end $$;

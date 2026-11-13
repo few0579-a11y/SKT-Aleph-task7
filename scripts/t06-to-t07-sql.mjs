@@ -33,6 +33,7 @@ const out = [];
 out.push(`-- T06 → T07 이관: T06 내보내기 ${d.exported_at} 기준, 계정 '${username}'`);
 out.push(`-- 건수: ${JSON.stringify(d.counts)}`);
 out.push('begin;');
+out.push('set local search_path to t07;  -- T07 표는 t07 스키마에 있다');
 out.push(`do $$ begin
   if not exists (select 1 from users where username = ${lit(username)}) then raise exception '먼저 T07 앱에서 ${username} 계정으로 가입하세요'; end if;
   if exists (select 1 from plans) then raise exception '이미 계획이 있어 이관을 멈춥니다(빈 DB에서만 실행)'; end if;
