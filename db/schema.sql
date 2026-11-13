@@ -208,3 +208,39 @@ alter table task_completions enable row level security;
 alter table runs enable row level security;
 alter table reviews enable row level security;
 alter table tag_colors enable row level security;
+
+-- ===== T07 카드 1~3: 회원·세션과 사용자별 자료 =====
+-- 비밀번호는 argon2id 해시만 저장한다(평문 컬럼 없음). 해시는 서버 함수에서 @node-rs/argon2로 만든다.
+create table if not exists users (
+  id                  bigint generated always as identity primary key,
+  username            text not null check (username ~ '^[a-z0-9]{3,20}$'),  -- 소문자로 바꿔 저장 → 대소문자만 다른 중복 가입 불가
+  password_hash       text not null check (password_hash like '$argon2id$%'),
+  password_changed_at timestamptz not null default now(),
+  created_at          timestamptz not null default now()
+);
+create unique index if not exists users_username_key on users (username);
+
+-- 로그인 세션. 브라우저 쿠키에는 무작위 값(토큰)만, DB에는 그 SHA-256 해시만 둔다.
+-- 로그아웃·비밀번호 변경 때 행을 지우면 같은 쿠키 값은 바로 거절된다. 만료는 로그인 후 7일 고정.
+create table if not exists sessions (
+  id         bigint generated always as identity primary key,
+  user_id    bigint not null references users(id) on delete cascade,
+  token_hash text not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create index if not exists sessions_user_idx on sessions (user_id);
+
+-- 자료의 주인: 계획에 user_id를 두고, 할 일·완료·실행 기록·회고·이력은 계획을 거쳐 주인을 찾는다.
+alter table plans add column if not exists user_id bigint references users(id);
+alter table plans alter column user_id set not null;  -- 새 DB(T07)는 빈 상태에서 시작하므로 바로 필수로 둔다
+create index if not exists plans_user_idx on plans (user_id);
+
+-- 태그 색도 사용자별로 바꾼다(같은 태그 이름이라도 사용자마다 다른 색)
+alter table tag_colors add column if not exists user_id bigint references users(id);
+alter table tag_colors alter column user_id set not null;
+alter table tag_colors drop constraint if exists tag_colors_pkey;
+create unique index if not exists tag_colors_user_tag on tag_colors (user_id, tag);
+
+alter table users enable row level security;
+alter table sessions enable row level security;

@@ -241,3 +241,12 @@ ul.plain li { padding: 6px 0; border-bottom: 1px dashed var(--line-2); }
   .card { padding: 14px; }
   h1 { font-size: 1.3rem; }
 }
+
+/* ===== T07 로그인·가입·계정 ===== */
+.top nav { align-items: center; }
+.auth { max-width: 420px; margin: 32px auto; display: grid; gap: 12px; }
+.auth h1 { margin: 0; }
+.auth label { display: grid; gap: 4px; }
+.auth button[type=submit] { justify-self: start; }
+.auth-msg { margin: 0; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--notice-bg); color: var(--notice-ink); border: 1px solid var(--notice-line); font-weight: 600; }
+.auth-msg.hidden { display: none; }

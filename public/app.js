@@ -39,6 +39,8 @@ async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data = await r.json().catch(() => ({}));
+  // 세션이 없거나 끝났으면(로그아웃·만료·비밀번호 변경) 어느 화면에서든 로그인 화면으로 보낸다
+  if (r.status === 401 && !path.startsWith('auth/')) { me = null; showAuth('login', '로그인이 필요합니다. 다시 로그인해 주세요.'); throw new Error('로그인이 필요합니다'); }
   if (!r.ok) throw new Error(data.error || `요청 실패 (${r.status})`);
   return data;
 }
@@ -110,6 +112,83 @@ function planFields(p = {}) {
 }
 const toBody = (d) => ({ ...d, estimated_minutes: Number(d.estimated_minutes) });
 
+// ---------- 로그인 상태 ----------
+let me = null; // { id, username } — 서버의 /api/auth/me 응답만 믿는다(브라우저에 따로 저장하지 않음)
+const AUTH_PAGES = ['login', 'signup'];
+
+function renderNav() {
+  const nav = document.getElementById('nav');
+  if (!me) { nav.replaceChildren(); return; }
+  nav.replaceChildren(
+    h('a', { href: '#/' }, '계획 목록'),
+    h('a', { href: '/api/export', id: 'export-link', download: true }, '내 데이터 내보내기(JSON)'),
+    h('a', { href: '#/account', id: 'account-link' }, `${me.username} · 계정`),
+    h('button', { type: 'button', class: 'ghost small', id: 'logout', onclick: guard(async () => {
+      await api('auth/logout', { method: 'POST' });
+      me = null; toast('로그아웃했습니다');
+      location.hash = '#/login';
+    }) }, '로그아웃'));
+}
+
+// 로그인·가입 화면. 로그인 전에는 자료 화면 주소로 와도 이 화면만 그린다(자료 API는 부르지 않음).
+function showAuth(mode, message) {
+  renderNav();
+  const isLogin = mode !== 'signup';
+  const wanted = AUTH_PAGES.includes(location.hash.replace(/^#\/?/, '').split('?')[0]) ? '' : location.hash;
+  const msg = h('p', { class: message ? 'auth-msg' : 'auth-msg hidden', id: 'auth-msg', role: 'alert' }, message || '');
+  const form = h('form', { id: isLogin ? 'login-form' : 'signup-form', class: 'card auth', onsubmit: guard(async (e) => {
+    const d = formData(e.target);
+    msg.className = 'auth-msg hidden';
+    try {
+      if (!isLogin) {
+        if (d.password !== d.password2) throw new Error('비밀번호 확인이 일치하지 않습니다');
+        await api('auth/signup', { method: 'POST', body: { username: d.username, password: d.password } });
+        location.hash = '#/login';
+        showAuth('login', `가입했습니다. '${d.username.trim().toLowerCase()}'(으)로 로그인하세요.`);
+        return;
+      }
+      const r = await api('auth/login', { method: 'POST', body: { username: d.username, password: d.password } });
+      me = r.user; toast(`${me.username}님, 로그인했습니다`);
+      // 로그인 전에 열려던 주소로 돌아간다(주소가 이미 그대로면 다시 그리기만)
+      const target = wanted || '#/';
+      if (location.hash !== target) location.hash = target; else route();
+    } catch (err) {
+      msg.textContent = err.message; msg.className = 'auth-msg';
+      e.target.password.value = ''; if (e.target.password2) e.target.password2.value = '';
+    }
+  }) },
+    h('h1', {}, isLogin ? '로그인' : '회원 가입'),
+    h('p', { class: 'muted' }, isLogin ? '내 계획과 기록은 로그인한 뒤에만 보입니다.' : '아이디는 영문 소문자·숫자 3~20자, 비밀번호는 8자 이상입니다.'),
+    msg,
+    field('아이디', h('input', { name: 'username', required: true, autocomplete: 'username', minlength: 3, maxlength: 20, pattern: '[A-Za-z0-9]{3,20}', autocapitalize: 'none', spellcheck: 'false' })),
+    field('비밀번호', h('input', { name: 'password', type: 'password', required: true, minlength: isLogin ? 1 : 8, maxlength: 128, autocomplete: isLogin ? 'current-password' : 'new-password' })),
+    isLogin ? null : field('비밀번호 확인', h('input', { name: 'password2', type: 'password', required: true, minlength: 8, maxlength: 128, autocomplete: 'new-password' })),
+    h('button', { type: 'submit' }, isLogin ? '로그인' : '가입하기'),
+    h('p', { class: 'muted' }, isLogin ? '계정이 없나요? ' : '이미 계정이 있나요? ',
+      h('a', { href: isLogin ? '#/signup' : '#/login', id: isLogin ? 'to-signup' : 'to-login' }, isLogin ? '회원 가입' : '로그인')));
+  render(form);
+  form.username.focus();
+}
+
+// ---------- 계정: 비밀번호 변경 ----------
+function accountPage() {
+  const form = h('form', { id: 'password-form', class: 'card auth', onsubmit: guard(async (e) => {
+    const d = formData(e.target);
+    if (d.new_password !== d.new_password2) throw new Error('새 비밀번호 확인이 일치하지 않습니다');
+    await api('auth/password', { method: 'POST', body: { current_password: d.current_password, new_password: d.new_password } });
+    me = null;
+    location.hash = '#/login';
+    showAuth('login', '비밀번호를 바꿨습니다. 모든 기기에서 로그아웃되었으니 새 비밀번호로 다시 로그인하세요.');
+  }) },
+    h('h2', {}, '비밀번호 변경'),
+    h('p', { class: 'muted' }, '바꾸면 이 계정의 모든 로그인(다른 기기 포함)이 끝나고 다시 로그인해야 합니다.'),
+    field('현재 비밀번호', h('input', { name: 'current_password', type: 'password', required: true, autocomplete: 'current-password' })),
+    field('새 비밀번호(8자 이상)', h('input', { name: 'new_password', type: 'password', required: true, minlength: 8, maxlength: 128, autocomplete: 'new-password' })),
+    field('새 비밀번호 확인', h('input', { name: 'new_password2', type: 'password', required: true, minlength: 8, maxlength: 128, autocomplete: 'new-password' })),
+    h('button', { type: 'submit' }, '비밀번호 변경'));
+  render(h('h1', { class: 'page-title' }, `계정 · ${me.username}`), form);
+}
+
 // ---------- 라우팅 ----------
 window.addEventListener('hashchange', route);
 route();
@@ -118,8 +197,15 @@ async function route() {
   const parts = path.split('/').filter(Boolean);
   const q = Object.fromEntries(new URLSearchParams(qs || ''));
   app.replaceChildren(h('p', { class: 'muted loading' }, '불러오는 중…'));
+  if (!me) {
+    try { me = (await api('auth/me')).user; } catch { me = null; }
+  }
+  if (!me) return showAuth(parts[0] === 'signup' ? 'signup' : 'login');
+  if (AUTH_PAGES.includes(parts[0])) { location.hash = '#/'; return; }
+  renderNav();
   try {
-    if (parts[0] === 'plan' && parts[1]) {
+    if (parts[0] === 'account') accountPage();
+    else if (parts[0] === 'plan' && parts[1]) {
       await loadTagColors();
       const view = parts[2] || '';
       if (view === 'review') await reviewPage(parts[1], q);

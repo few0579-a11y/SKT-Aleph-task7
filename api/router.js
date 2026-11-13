@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   const query = Object.fromEntries(url.searchParams);
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body || '{}'); } catch { body = {}; } }
-  const r = await respond({ method: req.method, path, query, body: body || {} });
+  const r = await respond({ method: req.method, path, query, body: body || {}, headers: req.headers });
   res.status(r.status);
   for (const [k, v] of Object.entries(r.headers)) res.setHeader(k, v);
   res.send(r.body);

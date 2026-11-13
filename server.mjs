@@ -17,7 +17,7 @@ http.createServer(async (req, res) => {
     for await (const c of req) raw += c;
     let body = {};
     try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
-    const r = await serial(() => respond({ method: req.method, path: url.pathname.slice(5), query: Object.fromEntries(url.searchParams), body }));
+    const r = await serial(() => respond({ method: req.method, path: url.pathname.slice(5), query: Object.fromEntries(url.searchParams), body, headers: req.headers }));
     res.writeHead(r.status, r.headers).end(r.body);
     return;
   }
