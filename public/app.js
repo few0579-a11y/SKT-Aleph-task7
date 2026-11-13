@@ -121,6 +121,7 @@ function renderNav() {
   if (!me) { nav.replaceChildren(); return; }
   nav.replaceChildren(
     h('a', { href: '#/' }, '계획 목록'),
+    h('a', { href: '#/observe', id: 'observe-link' }, '5일 관찰'),
     h('a', { href: '/api/export', id: 'export-link', download: true }, '내 데이터 내보내기(JSON)'),
     h('a', { href: '#/account', id: 'account-link' }, `${me.username} · 계정`),
     h('button', { type: 'button', class: 'ghost small', id: 'logout', onclick: guard(async () => {
@@ -205,6 +206,7 @@ async function route() {
   renderNav();
   try {
     if (parts[0] === 'account') accountPage();
+    else if (parts[0] === 'observe') await observePage();
     else if (parts[0] === 'plan' && parts[1]) {
       await loadTagColors();
       const view = parts[2] || '';
@@ -720,4 +722,123 @@ function taskEdit(t, range) {
       await api(`tasks/${t.id}`, { method: 'PATCH', body: toTaskBody(formData(e.target)) });
       toast('할 일을 수정했습니다'); route();
     }) }, ...taskFields(t, range), h('div', { class: 'btns' }, h('button', { type: 'submit' }, '수정 저장'))));
+}
+
+// ---------- 5일 관찰 (T07 카드 5) ----------
+// 집계는 서버(lib/observation.mjs)가 하고, 화면은 그 결과와 근거 기록을 그대로 보여 준다.
+const OBS_DEFAULTS = {
+  question: '하루 공부 목표를 120분으로 정해 두면, 실제로 하루에 몇 분을 공부하는가?',
+  metric: '하루 실행 시간',
+  unit: '분',
+  calc_rule: '실행 기록의 시작 시각이 속한 서울 날짜별로 실제 시간(분)을 더한다. 시작일 이후 기록이 있는 날을 순서대로 1~5일차로 센다.',
+  missing_rule: '시작일 이후 기록이 없는 날은 0분으로 표에 보이고, 일차 번호와 평균에는 넣지 않는다.',
+  duplicate_rule: '같은 날 시간이 겹치는 기록은 겹친 구간을 한 번만 센다(겹치는 기록 묶음마다 실제 시간 합과 시작~끝 분 중 작은 값).',
+  outlier_rule: '한 기록의 실제 시간이 240분을 넘으면 이상값으로 표시만 하고 합계에는 넣는다.',
+  rounding_rule: '평균은 소수 첫째 자리에서 반올림한 정수 분.',
+  week_start: '월요일',
+  rule_before: '하루 공부 목표 120분(시간대는 정하지 않음)',
+};
+const OBS_FIELDS = [
+  ['question', '관찰 질문'], ['metric', '지표'], ['unit', '단위'], ['calc_rule', '계산 규칙'],
+  ['missing_rule', '결측값'], ['duplicate_rule', '중복값'], ['outlier_rule', '이상값'],
+  ['rounding_rule', '반올림'], ['week_start', '주 시작 요일'], ['rule_before', '변경 전 계획 규칙'],
+];
+
+async function observePage() {
+  const v = await api('observation');
+  if (!v.observation) return observeSetup(v.today_seoul);
+  const o = v.observation, sm = v.summary;
+
+  const settings = card({ id: 'obs-settings' }, '관찰 설정 (1일차 전에 고정 · 고칠 수 없음)',
+    h('dl', { class: 'facts' },
+      h('dt', {}, '시작일'), h('dd', {}, o.start_date),
+      ...OBS_FIELDS.flatMap(([k, label]) => [h('dt', {}, label), h('dd', {}, o[k])]),
+      h('dt', {}, '저장 시각'), h('dd', {}, fmtTs(o.created_at))));
+
+  const before = sm.before, after = sm.after;
+  const daysLabel = (xs) => xs.map((d) => d + '일차').join(', ') || '-';
+  const compare = card({ id: 'obs-compare' }, '규칙 변경 전후 비교 (같은 지표·단위·계산 규칙)',
+    h('div', { class: 'kpis' },
+      h('div', { class: 'kpi' }, h('span', {}, `변경 전 · ${daysLabel(before.days)}`),
+        h('b', {}, before.average_minutes === null ? '-' : `평균 ${before.average_minutes}${o.unit}`),
+        h('small', { class: 'muted' }, `합계 ${before.total_minutes}${o.unit} · 규칙: ${o.rule_before}`)),
+      h('div', { class: 'kpi' }, h('span', {}, `변경 후 · ${daysLabel(after.days)}`),
+        h('b', {}, after.average_minutes === null ? '-' : `평균 ${after.average_minutes}${o.unit}`),
+        h('small', { class: 'muted' }, `합계 ${after.total_minutes}${o.unit} · 규칙: ${v.rule_change ? v.rule_change.rule_after : '(아직 안 바꿈)'}`)),
+      h('div', { class: 'kpi' }, h('span', {}, `관찰 ${sm.observed_days} / 5일`),
+        h('b', {}, `합계 ${sm.total_minutes}${o.unit}`),
+        h('small', { class: 'muted' }, sm.average_minutes === null ? '평균 -' : `평균 ${sm.average_minutes}${o.unit}`))),
+    h('p', { class: 'check ok', id: 'obs-handsum' }, `손으로 더하기: ${sm.observed_days ? sm.hand_sum : '기록 없음'} ${o.unit}`),
+    sm.weeks.length ? h('p', { class: 'muted' }, '주별 합계(월요일 시작): ', sm.weeks.map((w) => `${w.monday} 주 ${w.minutes}${o.unit}`).join(' · ')) : null);
+
+  const rows = v.rows.map((r) => h('tr', { class: r.missing ? 'muted' : '', 'data-date': r.date },
+    h('td', { class: 'nowrap' }, r.day ? `${r.day}일차` : r.missing ? '결측' : '관찰 후'),
+    h('td', { class: 'nowrap' }, `${r.date} (${WEEKDAYS[weekdayOf(r.date)]})`),
+    h('td', { class: 'nowrap num' }, `${r.minutes}${o.unit}`),
+    h('td', {}, r.runs.length
+      ? h('ul', { class: 'plain small' },
+          ...r.runs.map((x) => h('li', {},
+            `#${x.id} ${hm(seoulParts(x.started_at).min)}–${hm(seoulParts(x.ended_at).min)} · 실제 ${x.actual_minutes}분 · ${x.task_title}`,
+            x.outlier ? h('span', { class: 'badge late' }, '이상값(240분 초과)') : null)),
+          ...r.groups.filter((g) => g.overlapped).map((g) => h('li', { class: 'blocker' },
+            `겹침 #${g.run_ids.join(', #')}: 실제 합 ${g.actual_sum}분, 시작~끝 ${g.span_minutes}분 → ${g.counted_minutes}분으로 셈`)))
+      : '기록 없음 → 0분'),
+    h('td', { class: 'nowrap small muted' }, r.first_saved_at
+      ? fmtTs(r.first_saved_at) + (r.last_saved_at !== r.first_saved_at ? ' ~ ' + fmtTs(r.last_saved_at) : '')
+      : '-')));
+  const table = card({ id: 'obs-days' }, '날짜별 기록',
+    h('p', { class: 'muted' }, '실행 기록은 할 일 화면에서 추가합니다. 시각은 서울 기준이고, 오른쪽 열은 기록을 저장한 시각입니다.'),
+    h('div', { class: 'scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, ...['일차', '날짜', o.metric, '근거 실행 기록', '저장 시각'].map((x) => h('th', {}, x)))),
+      h('tbody', {}, ...rows))));
+
+  let change;
+  if (v.rule_change) {
+    const c = v.rule_change, od = v.order;
+    change = card({ id: 'obs-rule-change' }, '계획 규칙 변경 (한 번만 · 고칠 수 없음)',
+      h('dl', { class: 'facts' },
+        h('dt', {}, '바꾼 시각'), h('dd', {}, fmtTs(c.changed_at)),
+        h('dt', {}, '변경 전'), h('dd', {}, o.rule_before),
+        h('dt', {}, '변경 후'), h('dd', {}, c.rule_after),
+        h('dt', {}, '이유'), h('dd', {}, c.reason),
+        h('dt', {}, '가리키는 기록'), h('dd', {}, `1일차 ${od.day1_date ?? '-'} · 2일차 ${od.day2_date ?? '-'} 뒤, 3일차 ${od.day3_date ?? '(아직 없음)'} 앞`)),
+      h('p', { class: 'check ' + (od.ok ? 'ok' : 'bad'), id: 'obs-order' },
+        `순서 확인: 2일차 마지막 저장 뒤 ${od.after_day2 ? '✓' : '✗'} · 3일차 첫 저장 앞 ${od.before_day3 ? '✓' : '✗'}`));
+  } else {
+    const off = !v.can_change_rule;
+    const form = h('form', { id: 'rule-change-form', class: 'grid', onsubmit: guard(async (e) => {
+      const d = formData(e.target);
+      if (!confirm(`계획 규칙을 바꿀까요?\n변경 전: ${o.rule_before}\n변경 후: ${d.rule_after}\n이유: ${d.reason}\n\n한 번만 바꿀 수 있고 고칠 수 없습니다. 바꾼 시각은 서버 시각으로 기록됩니다.`)) return;
+      await api('observation/rule-change', { method: 'POST', body: d });
+      toast('계획 규칙 변경을 기록했습니다'); route();
+    }) },
+      field('변경 후 계획 규칙(하나만 바꿈)', h('input', { name: 'rule_after', required: true, maxlength: 300, disabled: off }), 'full'),
+      field('바꾼 이유', h('textarea', { name: 'reason', required: true, maxlength: 500, disabled: off }), 'full'),
+      h('div', { class: 'row end full' }, h('button', { type: 'submit', disabled: off }, '규칙 변경 기록')));
+    change = card({ id: 'obs-rule-change' }, '계획 규칙 변경 (2일차 뒤 · 3일차 앞에 한 번)',
+      h('p', { class: off ? 'muted' : 'check ok' }, off ? v.change_blocked_reason : '지금 바꿀 수 있습니다. 3일차 기록을 남기기 전에 바꾸세요.'),
+      form);
+  }
+
+  render(h('h1', { class: 'page-title' }, '5일 관찰'), compare, table, change, settings);
+}
+
+function observeSetup(today) {
+  const long = ['question', 'calc_rule', 'duplicate_rule'];
+  const form = h('form', { id: 'obs-form', class: 'card', onsubmit: guard(async (e) => {
+    const d = formData(e.target);
+    if (!confirm('관찰 설정을 저장할까요?\n저장한 뒤에는 질문·지표·단위·규칙을 고칠 수 없습니다.')) return;
+    await api('observation', { method: 'POST', body: d });
+    toast('관찰 설정을 저장했습니다'); route();
+  }) },
+    h('h2', {}, '관찰 설정 (1일차 전에 한 번만)'),
+    h('p', { class: 'muted' }, '저장하면 고칠 수 없습니다. 플랫폼의 「5일 관찰 시작」에 적은 내용과 같게 맞추세요.'),
+    h('div', { class: 'grid' },
+      field('시작일(서울)', h('input', { name: 'start_date', type: 'date', required: true, value: today })),
+      ...OBS_FIELDS.map(([k, label]) => field(label, long.includes(k)
+        ? h('textarea', { name: k, required: true, maxlength: k === 'calc_rule' ? 1000 : 300 }, OBS_DEFAULTS[k])
+        : h('input', { name: k, required: true, maxlength: 300, value: OBS_DEFAULTS[k] }),
+        k === 'unit' || k === 'week_start' || k === 'metric' ? '' : 'full'))),
+    h('div', { class: 'row end' }, h('button', { type: 'submit' }, '관찰 설정 저장')));
+  render(h('h1', { class: 'page-title' }, '5일 관찰'), form);
 }
