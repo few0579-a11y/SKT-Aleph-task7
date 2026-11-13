@@ -5,7 +5,9 @@
 // - 비밀값은 다루지 않는다. 결과 SQL에는 T06에 공개돼 있던 기록만 들어 있다.
 import { readFile } from 'node:fs/promises';
 
-const [file, rawUser] = process.argv.slice(2);
+// --oneline: 주석 없이 한 줄로(값 속 줄바꿈은 E'\n'으로) — 웹 SQL 편집기에 입력할 때 자동 완성이 끼어들지 않게
+const ONELINE = process.argv.includes('--oneline');
+const [file, rawUser] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 if (!file || !rawUser) { console.error('usage: node scripts/t06-to-t07-sql.mjs <t06-export.json> <username>'); process.exit(1); }
 const username = rawUser.trim().toLowerCase();
 if (!/^[a-z0-9]{3,20}$/.test(username)) { console.error('아이디 형식이 올바르지 않습니다'); process.exit(1); }
@@ -16,7 +18,11 @@ const lit = (v) => {
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) return v.length ? `array[${v.map(lit).join(', ')}]::text[]` : `'{}'::text[]`;
   if (typeof v === 'object') return `${lit(JSON.stringify(v))}::jsonb`;
-  return `'${String(v).replace(/'/g, "''")}'`;
+  const str = String(v);
+  if (ONELINE && /[\n\r\\]/.test(str)) {
+    return `E'${str.replace(/\\/g, '\\\\').replace(/'/g, "''").replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'`;
+  }
+  return `'${str.replace(/'/g, "''")}'`;
 };
 const COLS = {
   plans: ['id', 'title', 'period_start', 'period_end', 'priority', 'success_criteria', 'estimated_minutes', 'revision', 'created_at', 'updated_at', 'carried_improvement'],
@@ -59,11 +65,13 @@ for (const t of TRIGGERED) out.push(`alter table ${t} enable trigger user;`);
 // 다음에 새로 만드는 행의 ID가 옮긴 ID와 겹치지 않게
 for (const t of Object.keys(COLS)) out.push(`select setval(pg_get_serial_sequence('${t}', 'id'), greatest((select coalesce(max(id), 0) from ${t}), 1));`);
 out.push('commit;');
-// 확인용: 실행 결과로 계정별 건수가 보인다
+// 확인용: 실행 결과로 계정별 건수가 보인다(commit 뒤라 set local이 풀리므로 t07.을 붙인다)
 out.push(`select u.username,
-  (select count(*) from plans p where p.user_id = u.id) as plans,
-  (select count(*) from tasks t join plans p on p.id = t.plan_id where p.user_id = u.id) as tasks,
-  (select count(*) from runs r join tasks t on t.id = r.task_id join plans p on p.id = t.plan_id where p.user_id = u.id) as runs,
-  (select count(*) from reviews r join plans p on p.id = r.plan_id where p.user_id = u.id) as reviews
-from users u where u.username = ${lit(username)};`);
-console.log(out.join('\n'));
+  (select count(*) from t07.plans p where p.user_id = u.id) as plans,
+  (select count(*) from t07.tasks t join t07.plans p on p.id = t.plan_id where p.user_id = u.id) as tasks,
+  (select count(*) from t07.runs r join t07.tasks t on t.id = r.task_id join t07.plans p on p.id = t.plan_id where p.user_id = u.id) as runs,
+  (select count(*) from t07.reviews r join t07.plans p on p.id = r.plan_id where p.user_id = u.id) as reviews
+from t07.users u where u.username = ${lit(username)};`);
+if (ONELINE) {
+  console.log(out.join('\n').split('\n').filter((l) => !l.trim().startsWith('--')).map((l) => l.replace(/;\s+--.*$/, ';').trim()).join(' '));
+} else console.log(out.join('\n'));
