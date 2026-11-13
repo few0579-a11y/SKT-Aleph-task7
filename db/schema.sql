@@ -265,7 +265,9 @@ begin
   end if;
   execute 'alter role t07_app set search_path = t07';
   execute 'grant usage on schema t07 to t07_app';
-  execute 'grant select, insert, update, delete on all tables in schema t07 to t07_app';
+  -- 지우기는 세션(로그아웃)만. 계정과 자료 삭제는 db/t07-account-delete.sql의 delete_account()로만 한다.
+  execute 'grant select, insert, update on all tables in schema t07 to t07_app';
+  execute 'grant delete on t07.sessions to t07_app';
   execute 'grant usage, select on all sequences in schema t07 to t07_app';
   execute 'grant execute on all functions in schema t07 to t07_app';
   for t in select tablename from pg_tables where schemaname = 't07' loop

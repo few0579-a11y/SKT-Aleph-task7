@@ -187,7 +187,30 @@ function accountPage() {
     field('새 비밀번호(8자 이상)', h('input', { name: 'new_password', type: 'password', required: true, minlength: 8, maxlength: 128, autocomplete: 'new-password' })),
     field('새 비밀번호 확인', h('input', { name: 'new_password2', type: 'password', required: true, minlength: 8, maxlength: 128, autocomplete: 'new-password' })),
     h('button', { type: 'submit' }, '비밀번호 변경'));
-  render(h('h1', { class: 'page-title' }, `계정 · ${me.username}`), form);
+  // 계정 삭제: 브라우저 확인 창(confirm) 대신 화면 안에서 비밀번호 + 아이디를 다시 입력받는다
+  const delMsg = h('p', { class: 'auth-msg hidden', id: 'delete-msg', role: 'alert' });
+  const del = h('form', { id: 'delete-form', class: 'card auth danger-zone', onsubmit: async (e) => {
+    e.preventDefault();
+    const d = formData(e.target);
+    try {
+      const r = await api('auth/delete-account', { method: 'POST', body: { password: d.password, username_confirm: d.username_confirm } });
+      me = null;
+      const n = r.deleted;
+      location.hash = '#/login';
+      showAuth('login', `계정과 자료를 모두 지웠습니다(계획 ${n.plans} · 할 일 ${n.tasks} · 실행 기록 ${n.runs} · 회고 ${n.reviews} · 관찰 ${n.observations}건). 되돌릴 수 없습니다.`);
+    } catch (err) {
+      delMsg.textContent = err.message; delMsg.className = 'auth-msg';
+      e.target.password.value = '';
+    }
+  } },
+    h('h2', {}, '계정 삭제'),
+    h('p', { id: 'delete-notice' }, '계정을 지우면 내 자료도 함께 모두 지워집니다: 계획과 수정 이력, 할 일, 완료 기록, 실행 기록, 회고, 태그 색, 5일 관찰 설정과 규칙 변경, 로그인 세션. 지운 뒤에는 되돌릴 수 없습니다.'),
+    h('p', { class: 'muted' }, '먼저 ', h('a', { href: '/api/export', download: true }, '내 데이터 내보내기(JSON)'), '로 파일을 받아 두세요.'),
+    delMsg,
+    field('현재 비밀번호', h('input', { name: 'password', type: 'password', required: true, autocomplete: 'current-password' })),
+    field(`확인: 아이디 "${me.username}"를 그대로 입력`, h('input', { name: 'username_confirm', required: true, autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false' })),
+    h('button', { type: 'submit', class: 'danger' }, '계정과 자료 모두 삭제'));
+  render(h('h1', { class: 'page-title' }, `계정 · ${me.username}`), form, del);
 }
 
 // ---------- 라우팅 ----------

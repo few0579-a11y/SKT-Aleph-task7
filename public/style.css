@@ -250,3 +250,5 @@ ul.plain li { padding: 6px 0; border-bottom: 1px dashed var(--line-2); }
 .auth button[type=submit] { justify-self: start; }
 .auth-msg { margin: 0; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--notice-bg); color: var(--notice-ink); border: 1px solid var(--notice-line); font-weight: 600; }
 .auth-msg.hidden { display: none; }
+
+.danger-zone { border-color: var(--warn); }
