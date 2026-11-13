@@ -131,8 +131,18 @@ function renderNav() {
     }) }, '로그아웃'));
 }
 
+// 로그인 화면으로 보내면서 안내 문구를 띄운다. 주소를 바꾸면 route()가 화면을 다시 그리므로
+// 문구를 잠시 맡겨 두고(flash), 다시 그릴 때 꺼내 쓴다 — 바로 그리면 주소 변경 뒤 다시 그리기가 문구를 덮어쓴다.
+let flash = null;
+function goLogin(message) {
+  flash = message;
+  if (location.hash !== '#/login') location.hash = '#/login';
+  else showAuth('login');
+}
+
 // 로그인·가입 화면. 로그인 전에는 자료 화면 주소로 와도 이 화면만 그린다(자료 API는 부르지 않음).
 function showAuth(mode, message) {
+  if (!message && flash) { message = flash; flash = null; }
   renderNav();
   const isLogin = mode !== 'signup';
   const wanted = AUTH_PAGES.includes(location.hash.replace(/^#\/?/, '').split('?')[0]) ? '' : location.hash;
@@ -144,8 +154,7 @@ function showAuth(mode, message) {
       if (!isLogin) {
         if (d.password !== d.password2) throw new Error('비밀번호 확인이 일치하지 않습니다');
         await api('auth/signup', { method: 'POST', body: { username: d.username, password: d.password } });
-        location.hash = '#/login';
-        showAuth('login', `가입했습니다. '${d.username.trim().toLowerCase()}'(으)로 로그인하세요.`);
+        goLogin(`가입했습니다. '${d.username.trim().toLowerCase()}'(으)로 로그인하세요.`);
         return;
       }
       const r = await api('auth/login', { method: 'POST', body: { username: d.username, password: d.password } });
@@ -178,8 +187,7 @@ function accountPage() {
     if (d.new_password !== d.new_password2) throw new Error('새 비밀번호 확인이 일치하지 않습니다');
     await api('auth/password', { method: 'POST', body: { current_password: d.current_password, new_password: d.new_password } });
     me = null;
-    location.hash = '#/login';
-    showAuth('login', '비밀번호를 바꿨습니다. 모든 기기에서 로그아웃되었으니 새 비밀번호로 다시 로그인하세요.');
+    goLogin('비밀번호를 바꿨습니다. 모든 기기에서 로그아웃되었으니 새 비밀번호로 다시 로그인하세요.');
   }) },
     h('h2', {}, '비밀번호 변경'),
     h('p', { class: 'muted' }, '바꾸면 이 계정의 모든 로그인(다른 기기 포함)이 끝나고 다시 로그인해야 합니다.'),
@@ -196,8 +204,7 @@ function accountPage() {
       const r = await api('auth/delete-account', { method: 'POST', body: { password: d.password, username_confirm: d.username_confirm } });
       me = null;
       const n = r.deleted;
-      location.hash = '#/login';
-      showAuth('login', `계정과 자료를 모두 지웠습니다(계획 ${n.plans} · 할 일 ${n.tasks} · 실행 기록 ${n.runs} · 회고 ${n.reviews} · 관찰 ${n.observations}건). 되돌릴 수 없습니다.`);
+      goLogin(`계정과 자료를 모두 지웠습니다(계획 ${n.plans} · 할 일 ${n.tasks} · 실행 기록 ${n.runs} · 회고 ${n.reviews} · 관찰 ${n.observations}건). 되돌릴 수 없습니다.`);
     } catch (err) {
       delMsg.textContent = err.message; delMsg.className = 'auth-msg';
       e.target.password.value = '';
