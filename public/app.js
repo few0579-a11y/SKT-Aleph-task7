@@ -817,7 +817,7 @@ async function observePage() {
       ? fmtTs(r.first_saved_at) + (r.last_saved_at !== r.first_saved_at ? ' ~ ' + fmtTs(r.last_saved_at) : '')
       : '-')));
   const table = card({ id: 'obs-days' }, '날짜별 기록',
-    h('p', { class: 'muted' }, '실행 기록은 할 일 화면에서 추가합니다. 시각은 서울 기준이고, 오른쪽 열은 기록을 저장한 시각입니다.'),
+    h('p', { class: 'muted' }, '실행 기록은 맨 위 「오늘 공부 기록 추가」나 할 일 화면에서 추가합니다. 시각은 서울 기준이고, 오른쪽 열은 기록을 저장한 시각입니다.'),
     h('div', { class: 'scroll' }, h('table', {},
       h('thead', {}, h('tr', {}, ...['일차', '날짜', o.metric, '근거 실행 기록', '저장 시각'].map((x) => h('th', {}, x)))),
       h('tbody', {}, ...rows))));
@@ -850,7 +850,62 @@ async function observePage() {
       form);
   }
 
-  render(h('h1', { class: 'page-title' }, '5일 관찰'), compare, table, change, settings);
+  render(h('h1', { class: 'page-title' }, '5일 관찰'), await quickRunCard(v.today_seoul), compare, table, change, settings);
+}
+
+// 오늘 공부 기록: 할 일 화면의 실행 기록 추가와 같은 API(POST /api/runs)를 쓴다.
+// 오늘(서울)이 기간에 들어가는 계획의 할 일만 고를 수 있고, 시각도 오늘 0시~지금으로만 받는다.
+// 저장 전 확인은 브라우저 팝업 대신 화면 안에서 한다.
+async function quickRunCard(today) {
+  const { plans } = await api('plans');
+  const active = plans.filter((p) => p.period_start <= today && today <= p.period_end);
+  const lists = await Promise.all(active.map((p) => api(`tasks?plan_id=${p.id}`)));
+  const options = active.flatMap((p, i) => lists[i].tasks.map((t) => h('option', { value: t.id }, `${p.title} · ${t.title}`)));
+  const title = `오늘(${today}) 공부 기록 추가`;
+  if (!options.length) {
+    return card({ id: 'quick-run' }, title,
+      h('p', { class: 'muted' }, active.length
+        ? '오늘이 기간에 들어가는 계획에 할 일이 없습니다. 계획을 열어 할 일을 먼저 추가하세요.'
+        : '오늘이 기간에 들어가는 계획이 없습니다. 「계획 목록」에서 오늘을 포함하는 계획과 할 일을 먼저 만드세요.'),
+      h('a', { href: '#/' }, '계획 목록으로'));
+  }
+  const min = `${today}T00:00`, max = seoulNowLocal();
+  const preview = h('span', { class: 'muted' });
+  const confirmBox = h('div', { id: 'quick-run-confirm', class: 'confirm-box', hidden: true });
+  const form = h('form', { id: 'quick-run-form', class: 'grid', oninput: (e) => {
+    const f = e.currentTarget;
+    const a = Date.parse(f.started_at.value), b = Date.parse(f.ended_at.value);
+    preview.textContent = a && b && b > a ? `종료−시작 ${Math.round((b - a) / 60000)}분` : '';
+    confirmBox.hidden = true;
+  }, onsubmit: (e) => {
+    e.preventDefault();
+    const d = formData(e.target);
+    const label = e.target.task_id.selectedOptions[0].textContent;
+    confirmBox.replaceChildren(
+      h('p', {}, h('b', {}, '이대로 저장할까요? 저장한 기록은 고치거나 지울 수 없습니다.')),
+      h('dl', { class: 'facts' },
+        h('dt', {}, '할 일'), h('dd', {}, label),
+        h('dt', {}, '시각(서울)'), h('dd', {}, `${d.started_at.replace('T', ' ')} ~ ${d.ended_at.replace('T', ' ')}`),
+        h('dt', {}, '실제'), h('dd', {}, d.actual_minutes ? `${d.actual_minutes}분` : '(종료−시작으로 자동)'),
+        h('dt', {}, '막힘 사유'), h('dd', {}, d.blocker || '없음')),
+      h('div', { class: 'row end' },
+        h('button', { type: 'button', class: 'ghost', onclick: () => { confirmBox.hidden = true; } }, '취소'),
+        h('button', { type: 'button', id: 'quick-run-save', onclick: guard(async () => {
+          const { task_id, ...rest } = d;
+          await api('runs', { method: 'POST', body: { task_id: Number(task_id), ...rest } });
+          toast('실행 기록을 저장했습니다'); route();
+        }) }, '저장')));
+    confirmBox.hidden = false;
+  } },
+    field('할 일', h('select', { name: 'task_id', required: true }, ...options), 'full'),
+    field('시작(서울)', h('input', { name: 'started_at', type: 'datetime-local', required: true, min, max })),
+    field('종료(서울)', h('input', { name: 'ended_at', type: 'datetime-local', required: true, min, max, value: max })),
+    field('실제(분, 비우면 자동)', h('input', { name: 'actual_minutes', type: 'number', min: 0, step: 1 })),
+    field('막힘 사유(선택)', h('input', { name: 'blocker', maxlength: 500 })),
+    h('div', { class: 'row end full' }, preview, h('button', { type: 'submit' }, '확인하기')));
+  return card({ id: 'quick-run' }, title,
+    h('p', { class: 'muted' }, '공부를 마친 뒤 실제 시각으로 적습니다. 오늘 날짜만 넣을 수 있습니다.'),
+    form, confirmBox);
 }
 
 function observeSetup(today) {

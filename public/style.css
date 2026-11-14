@@ -252,3 +252,8 @@ ul.plain li { padding: 6px 0; border-bottom: 1px dashed var(--line-2); }
 .auth-msg.hidden { display: none; }
 
 .danger-zone { border-color: var(--warn); }
+
+/* 5일 관찰 · 오늘 공부 기록 추가 */
+#quick-run { border: 2px solid var(--acc); }
+.confirm-box { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--ok-soft); }
+.confirm-box[hidden] { display: none; }
